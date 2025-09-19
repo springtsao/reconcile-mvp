@@ -1,106 +1,130 @@
 import React, { useState, useEffect } from "react";
 
-function App() {
+const API_URL = import.meta.env.VITE_API_URL;
+
+export default function App() {
   const [orders, setOrders] = useState([]);
   const [form, setForm] = useState({
     name: "",
     phone: "",
     items: "",
+    amount: "",
     account_last5: "",
     shipping: "",
     status: "尚未匯款",
-    amount: ""
   });
 
   // 載入訂單
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_URL}/orders`)
-      .then((res) => res.json())
-      .then(setOrders)
-      .catch((err) => alert("載入失敗: " + err.message));
+    fetchOrders();
   }, []);
 
-  // 表單輸入更新
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
+  async function fetchOrders() {
+    try {
+      const res = await fetch(`${API_URL}/orders/`);
+      if (!res.ok) throw new Error("載入失敗");
+      const data = await res.json();
+      setOrders(data);
+    } catch (err) {
+      alert("載入失敗: " + err.message);
+    }
+  }
 
   // 新增訂單
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  async function addOrder() {
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/orders`, {
+      const res = await fetch(`${API_URL}/orders/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-
-      if (!res.ok) {
-        const errorText = await res.text();
-        alert("新增訂單失敗: " + errorText);
-        return;
-      }
-
-      const newOrder = await res.json();
-      setOrders([...orders, newOrder]);
-
+      if (!res.ok) throw new Error("新增訂單失敗");
+      await res.json();
+      fetchOrders();
       setForm({
         name: "",
         phone: "",
         items: "",
+        amount: "",
         account_last5: "",
         shipping: "",
         status: "尚未匯款",
-        amount: ""
       });
     } catch (err) {
       alert("請求錯誤: " + err.message);
     }
-  };
+  }
 
   return (
-    <div className="p-4 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">對帳系統</h1>
+    <div style={{ padding: "20px" }}>
+      <h1>對帳系統</h1>
 
-      {/* 新增訂單表單 */}
-      <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4 mb-6">
-        <input name="name" value={form.name} onChange={handleChange} placeholder="姓名" className="border p-2" required />
-        <input name="phone" value={form.phone} onChange={handleChange} placeholder="電話" className="border p-2" required />
-        <input name="items" value={form.items} onChange={handleChange} placeholder="購買項目" className="border p-2" />
-        <input name="amount" value={form.amount} onChange={handleChange} placeholder="金額" className="border p-2" />
-        <input name="account_last5" value={form.account_last5} onChange={handleChange} placeholder="帳號後五碼" className="border p-2" />
-        <input name="shipping" value={form.shipping} onChange={handleChange} placeholder="寄送方式" className="border p-2" />
-        <select name="status" value={form.status} onChange={handleChange} className="border p-2">
-          <option>尚未匯款</option>
-          <option>已對帳</option>
-          <option>已交貨</option>
+      {/* 表單 */}
+      <div style={{ marginBottom: "20px" }}>
+        <input
+          placeholder="姓名"
+          value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })}
+        />
+        <input
+          placeholder="電話"
+          value={form.phone}
+          onChange={(e) => setForm({ ...form, phone: e.target.value })}
+        />
+        <input
+          placeholder="購買項目"
+          value={form.items}
+          onChange={(e) => setForm({ ...form, items: e.target.value })}
+        />
+        <input
+          placeholder="金額"
+          value={form.amount}
+          onChange={(e) => setForm({ ...form, amount: e.target.value })}
+        />
+        <input
+          placeholder="帳號後五碼"
+          value={form.account_last5}
+          onChange={(e) => setForm({ ...form, account_last5: e.target.value })}
+        />
+        <input
+          placeholder="寄送方式"
+          value={form.shipping}
+          onChange={(e) => setForm({ ...form, shipping: e.target.value })}
+        />
+        <select
+          value={form.status}
+          onChange={(e) => setForm({ ...form, status: e.target.value })}
+        >
+          <option value="尚未匯款">尚未匯款</option>
+          <option value="已對帳">已對帳</option>
+          <option value="已交貨">已交貨</option>
         </select>
-        <button type="submit" className="bg-blue-500 text-white p-2 rounded">新增訂單</button>
-      </form>
+        <button onClick={addOrder}>新增訂單</button>
+      </div>
 
       {/* 訂單列表 */}
-      <table className="w-full border">
+      <table border="1" cellPadding="5" style={{ borderCollapse: "collapse" }}>
         <thead>
-          <tr className="bg-gray-100">
-            <th className="border p-2">姓名</th>
-            <th className="border p-2">電話</th>
-            <th className="border p-2">項目</th>
-            <th className="border p-2">金額</th>
-            <th className="border p-2">帳號後五碼</th>
-            <th className="border p-2">寄送方式</th>
-            <th className="border p-2">處理進度</th>
+          <tr>
+            <th>姓名</th>
+            <th>電話</th>
+            <th>項目</th>
+            <th>金額</th>
+            <th>帳號後五碼</th>
+            <th>寄送方式</th>
+            <th>處理進度</th>
           </tr>
         </thead>
         <tbody>
-          {orders.map((o, i) => (
-            <tr key={i}>
-              <td className="border p-2">{o.name}</td>
-              <td className="border p-2">{o.phone}</td>
-              <td className="border p-2">{o.items}</td>
-              <td className="border p-2">{o.amount}</td>
-              <td className="border p-2">{o.account_last5}</td>
-              <td className="border p-2">{o.shipping}</td>
-              <td className="border p-2">{o.status}</td>
+          {orders.map((o) => (
+            <tr key={o.id}>
+              <td>{o.name}</td>
+              <td>{o.phone}</td>
+              <td>{o.items}</td>
+              <td>{o.amount}</td>
+              <td>{o.account_last5}</td>
+              <td>{o.shipping}</td>
+              <td>{o.status}</td>
             </tr>
           ))}
         </tbody>
@@ -108,5 +132,3 @@ function App() {
     </div>
   );
 }
-
-export default App;
