@@ -1,39 +1,40 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
-function App() {
-  const [orders, setOrders] = useState([]);
+export default function App() {
   const [items, setItems] = useState([]);
-  const [form, setForm] = useState({ customer_name: "", item: "", quantity: 1, price: 0, status: "尚未匯款" });
-  const [newItem, setNewItem] = useState({ name: "", price: 0, stock: 0 });
-
-  const fetchOrders = async () => {
-    const res = await fetch(`${API_URL}/orders`);
-    setOrders(await res.json());
-  };
+  const [orders, setOrders] = useState([]);
+  const [customer, setCustomer] = useState("");
+  const [selectedItem, setSelectedItem] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [search, setSearch] = useState("");
 
   const fetchItems = async () => {
     const res = await fetch(`${API_URL}/items`);
     setItems(await res.json());
   };
 
-  useEffect(() => {
-    fetchOrders();
-    fetchItems();
-  }, []);
+  const fetchOrders = async () => {
+    const res = await fetch(`${API_URL}/orders?search=${search}`);
+    setOrders(await res.json());
+  };
 
-  const addOrder = async () => {
-    const res = await fetch(`${API_URL}/orders`, {
+  useEffect(() => {
+    fetchItems();
+    fetchOrders();
+  }, [search]);
+
+  const createOrder = async () => {
+    if (!customer || !selectedItem) return alert("請輸入完整資料");
+    await fetch(`${API_URL}/orders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify({ customer, item_id: selectedItem, quantity }),
     });
-    if (res.ok) {
-      fetchOrders();
-    } else {
-      alert("新增訂單失敗");
-    }
+    setCustomer("");
+    setQuantity(1);
+    fetchOrders();
   };
 
   const deleteOrder = async (id) => {
@@ -41,79 +42,79 @@ function App() {
     fetchOrders();
   };
 
-  const addItem = async () => {
-    const res = await fetch(`${API_URL}/items`, {
+  const createItem = async (name, price, stock) => {
+    await fetch(`${API_URL}/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newItem),
+      body: JSON.stringify({ name, price, stock }),
     });
-    if (res.ok) {
-      fetchItems();
-      setNewItem({ name: "", price: 0, stock: 0 });
-    } else {
-      alert("新增商品失敗");
-    }
-  };
-
-  const deleteItem = async (id) => {
-    await fetch(`${API_URL}/items/${id}`, { method: "DELETE" });
     fetchItems();
   };
 
-  const exportCSV = () => {
-    window.location.href = `${API_URL}/orders/export`;
-  };
-
   return (
-    <div className="p-6 space-y-6">
-      {/* 訂單區 */}
-      <div>
-        <h2 className="text-xl font-bold">新增訂單</h2>
-        <input placeholder="客戶姓名" value={form.customer_name} onChange={(e) => setForm({ ...form, customer_name: e.target.value })} />
-        <select value={form.item} onChange={(e) => {
-          const selected = items.find(i => i.name === e.target.value);
-          setForm({ ...form, item: e.target.value, price: selected ? selected.price : 0 });
-        }}>
-          <option value="">選擇商品</option>
-          {items.map(i => <option key={i.id} value={i.name}>{i.name} (${i.price})</option>)}
-        </select>
-        <input type="number" placeholder="數量" value={form.quantity} onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })} />
-        <div>總金額：{form.quantity * form.price} 元</div>
-        <button onClick={addOrder}>送出</button>
-      </div>
+    <div style={{ padding: 20 }}>
+      <h1>對帳系統 MVP</h1>
 
-      {/* 訂單列表 */}
-      <div>
-        <h2 className="text-xl font-bold">訂單列表</h2>
-        <button onClick={exportCSV}>📥 匯出 CSV</button>
-        <ul>
-          {orders.map(o => (
-            <li key={o.id}>
-              {o.customer_name} - {o.item} x {o.quantity} = {o.price * o.quantity} 元 [{o.status}]
-              <button onClick={() => deleteOrder(o.id)}>🗑️</button>
-            </li>
-          ))}
-        </ul>
-      </div>
+      <h2>新增訂單</h2>
+      <input placeholder="客戶姓名" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+      <select value={selectedItem} onChange={(e) => setSelectedItem(e.target.value)}>
+        <option value="">選擇商品</option>
+        {items.map((i) => (
+          <option key={i.id} value={i.id}>
+            {i.name}（${i.price}）
+          </option>
+        ))}
+      </select>
+      <input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
+      <button onClick={createOrder}>送出</button>
 
-      {/* 商品管理 */}
-      <div>
-        <h2 className="text-xl font-bold">商品管理</h2>
-        <input placeholder="名稱" value={newItem.name} onChange={(e) => setNewItem({ ...newItem, name: e.target.value })} />
-        <input type="number" placeholder="單價" value={newItem.price} onChange={(e) => setNewItem({ ...newItem, price: Number(e.target.value) })} />
-        <input type="number" placeholder="庫存" value={newItem.stock} onChange={(e) => setNewItem({ ...newItem, stock: Number(e.target.value) })} />
-        <button onClick={addItem}>新增商品</button>
-        <ul>
-          {items.map(i => (
-            <li key={i.id}>
-              {i.name} - ${i.price} (庫存: {i.stock})
-              <button onClick={() => deleteItem(i.id)}>🗑️</button>
-            </li>
+      <h2>搜尋訂單</h2>
+      <input placeholder="輸入姓名或商品" value={search} onChange={(e) => setSearch(e.target.value)} />
+
+      <h2>訂單列表</h2>
+      <table border="1" cellPadding="5">
+        <thead>
+          <tr>
+            <th>ID</th><th>客戶</th><th>商品</th><th>數量</th><th>金額</th><th>狀態</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => (
+            <tr key={o.id}>
+              <td>{o.id}</td>
+              <td>{o.customer}</td>
+              <td>{o.item_id}</td>
+              <td>{o.quantity}</td>
+              <td>{o.total}</td>
+              <td>{o.status}</td>
+              <td>
+                <button onClick={() => deleteOrder(o.id)}>🗑️</button>
+              </td>
+            </tr>
           ))}
-        </ul>
-      </div>
+        </tbody>
+      </table>
+
+      <a href={`${API_URL}/orders/export`}><button>匯出 CSV</button></a>
+
+      <h2>商品管理</h2>
+      <input id="itemName" placeholder="名稱" />
+      <input id="itemPrice" type="number" placeholder="單價" />
+      <input id="itemStock" type="number" placeholder="庫存" />
+      <button onClick={() => {
+        const name = document.getElementById("itemName").value;
+        const price = Number(document.getElementById("itemPrice").value);
+        const stock = Number(document.getElementById("itemStock").value);
+        createItem(name, price, stock);
+      }}>新增商品</button>
+
+      <ul>
+        {items.map((i) => (
+          <li key={i.id}>
+            {i.id}. {i.name} - ${i.price}（庫存 {i.stock}）
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
-
-export default App;
