@@ -1,150 +1,176 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+from typing import Optional, List
+import csv
+from fastapi.responses import StreamingResponse
+import io
 
+# --------------------
+# DB Model
+# --------------------
+class Product(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    price: float
+    stock: int
+
+
+class Order(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    customer_name: str
+    phone: str
+    product_id: int = Field(foreign_key="product.id")
+    quantity: int
+    amount: float
+    bank_last5: str
+    shipping: str
+    status: str = "尚未匯款"
+
+
+# --------------------
+# Setup
+# --------------------
 app = FastAPI()
+engine = create_engine("sqlite:///database.db")
+SQLModel.metadata.create_all(engine)
 
-# 允許前端跨域
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],  # 開發時先允許所有來源
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ==========================
-# 資料結構
-# ==========================
-class Product(BaseModel):
-    id: int
-    name: str
-    price: int
-    stock: int
 
-class ProductCreate(BaseModel):
-    name: str
-    price: int
-    stock: int
+# --------------------
+# Product APIs
+# --------------------
+@app.post("/products/", response_model=Product)
+def create_product(product: Product):
+    with Session(engine) as session:
+        session.add(product)
+        session.commit()
+        session.refresh(product)
+        return product
 
-class Order(BaseModel):
-    id: int
-    name: str
-    phone: str
-    product_id: int
-    product_name: str
-    quantity: int
-    account: str
-    delivery: str
-    status: str = "尚未匯款"
 
-class OrderCreate(BaseModel):
-    name: str
-    phone: str
-    product_id: int
-    quantity: int
-    account: str
-    delivery: str
+@app.get("/products/", response_model=List[Product])
+def list_products():
+    with Session(engine) as session:
+        products = session.exec(select(Product).order_by(Product.id)).all()
+        return products
 
-# ==========================
-# 假資料存放
-# ==========================
-products: List[Product] = []
-orders: List[Order] = []
-product_counter = 1
-order_counter = 1
-
-# ==========================
-# 商品管理 API
-# ==========================
-@app.get("/products", response_model=List[Product])
-def get_products():
-    return sorted(products, key=lambda p: p.id)
-
-@app.post("/products", response_model=Product)
-def create_product(product: ProductCreate):
-    global product_counter
-    new_product = Product(
-        id=product_counter,
-        name=product.name,
-        price=product.price,
-        stock=product.stock
-    )
-    products.append(new_product)
-    product_counter += 1
-    return new_product
 
 @app.patch("/products/{product_id}", response_model=Product)
-def update_product(product_id: int, product: ProductCreate):
-    for p in products:
-        if p.id == product_id:
-            p.name = product.name
-            p.price = product.price
-            p.stock = product.stock
-            return p
-    raise HTTPException(status_code=404, detail="Product not found")
+def update_product(product_id: int, product: Product):
+    with Session(engine) as session:
+        db_product = session.get(Product, product_id)
+        if not db_product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        update_data = product.dict(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(db_product, key, value)
+        session.add(db_product)
+        session.commit()
+        session.refresh(db_product)
+        return db_product
+
 
 @app.delete("/products/{product_id}")
 def delete_product(product_id: int):
-    global products
-    products = [p for p in products if p.id != product_id]
-    return {"message": "Product deleted"}
+    with Session(engine) as session:
+        product = session.get(Product, product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        session.delete(product)
+        session.commit()
+        return {"ok": True}
 
-# ==========================
-# 訂單管理 API
-# ==========================
-@app.get("/orders", response_model=List[Order])
-def get_orders():
-    return sorted(orders, key=lambda o: o.id)
 
-@app.post("/orders", response_model=Order)
-def create_order(order: OrderCreate):
-    global order_counter
-    product = next((p for p in products if p.id == order.product_id), None)
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
+# --------------------
+# Order APIs
+# --------------------
+@app.post("/orders/", response_model=Order)
+def create_order(order: Order):
+    with Session(engine) as session:
+        product = session.get(Product, order.product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        if product.stock < order.quantity:
+            raise HTTPException(status_code=400, detail="Not enough stock")
 
-    if order.quantity > product.stock:
-        raise HTTPException(status_code=400, detail="庫存不足")
+        order.amount = product.price * order.quantity
+        product.stock -= order.quantity
 
-    # 扣庫存
-    product.stock -= order.quantity
+        session.add(order)
+        session.add(product)
+        session.commit()
+        session.refresh(order)
+        return order
 
-    new_order = Order(
-        id=order_counter,
-        name=order.name,
-        phone=order.phone,
-        product_id=order.product_id,
-        product_name=product.name,
-        quantity=order.quantity,
-        account=order.account,
-        delivery=order.delivery,
-        status="尚未匯款"
-    )
-    orders.append(new_order)
-    order_counter += 1
-    return new_order
+
+@app.get("/orders/", response_model=List[Order])
+def list_orders(
+    search: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    sort_by: Optional[str] = Query("id")
+):
+    with Session(engine) as session:
+        query = select(Order)
+        if search:
+            query = query.where(Order.customer_name.contains(search))
+        if status:
+            query = query.where(Order.status == status)
+        if sort_by == "created":
+            query = query.order_by(Order.id.desc())
+        else:
+            query = query.order_by(Order.id)
+
+        orders = session.exec(query).all()
+        return orders
+
 
 @app.patch("/orders/{order_id}", response_model=Order)
-def update_order(order_id: int, updated: OrderCreate):
-    for o in orders:
-        if o.id == order_id:
-            product = next((p for p in products if p.id == updated.product_id), None)
-            if not product:
-                raise HTTPException(status_code=404, detail="Product not found")
-            o.name = updated.name
-            o.phone = updated.phone
-            o.product_id = updated.product_id
-            o.product_name = product.name
-            o.quantity = updated.quantity
-            o.account = updated.account
-            o.delivery = updated.delivery
-            return o
-    raise HTTPException(status_code=404, detail="Order not found")
+def update_order(order_id: int, order: Order):
+    with Session(engine) as session:
+        db_order = session.get(Order, order_id)
+        if not db_order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        update_data = order.dict(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(db_order, key, value)
+        session.add(db_order)
+        session.commit()
+        session.refresh(db_order)
+        return db_order
+
 
 @app.delete("/orders/{order_id}")
 def delete_order(order_id: int):
-    global orders
-    orders = [o for o in orders if o.id != order_id]
-    return {"message": "Order deleted"}
+    with Session(engine) as session:
+        order = session.get(Order, order_id)
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        session.delete(order)
+        session.commit()
+        return {"ok": True}
+
+
+# --------------------
+# Export CSV
+# --------------------
+@app.get("/orders/export/csv")
+def export_orders_csv():
+    with Session(engine) as session:
+        orders = session.exec(select(Order)).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["ID", "Customer", "Phone", "Product ID", "Quantity", "Amount", "Bank Last5", "Shipping", "Status"])
+    for o in orders:
+        writer.writerow([o.id, o.customer_name, o.phone, o.product_id, o.quantity, o.amount, o.bank_last5, o.shipping, o.status])
+
+    output.seek(0)
+    return StreamingResponse(output, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=orders.csv"})
