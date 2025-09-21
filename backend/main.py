@@ -1,142 +1,123 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import SQLModel, Field, Session, create_engine, select
-from typing import Optional, List
-import uvicorn
-
-# =========================================================
-# Database models
-# =========================================================
-
-class Order(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    customer_name: str
-    item: str
-    quantity: int
-    price: float
-    shipping_method: str
-    status: str = "尚未匯款"
-
-class Product(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    price: float
-    stock: int
-
-# =========================================================
-# Database setup
-# =========================================================
-
-DATABASE_URL = "sqlite:///./database.db"
-engine = create_engine(DATABASE_URL, echo=True)
-
-def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
-
-# =========================================================
-# FastAPI app
-# =========================================================
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import io
+import csv
 
 app = FastAPI()
 
-# Allow frontend access
+# CORS 設定，讓 Vercel 前端能連線
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ⚠️ 建議之後換成你的 Vercel 網址
+    allow_origins=["*"],  # 上線後可以改成你的前端網址
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# =========================================================
-# Orders Endpoints
-# =========================================================
+# ----------------- 資料模型 -----------------
+class Product(BaseModel):
+    id: int
+    name: str
+    price: int
+    stock: int
 
-@app.get("/orders", response_model=List[Order])
-def get_orders():
-    with Session(engine) as session:
-        return session.exec(select(Order)).all()
+class Order(BaseModel):
+    id: int
+    customer_name: str
+    item: str
+    quantity: int
+    price: int
+    status: str
+    shipping_method: str
 
-@app.post("/orders", response_model=Order)
-def create_order(order: Order):
-    with Session(engine) as session:
-        session.add(order)
-        session.commit()
-        session.refresh(order)
-        return order
+# ----------------- 模擬資料庫 -----------------
+products = []
+orders = []
+product_id_counter = 1
+order_id_counter = 1
 
-@app.patch("/orders/{order_id}", response_model=Order)
-def update_order(order_id: int, order_data: Order):
-    with Session(engine) as session:
-        order = session.get(Order, order_id)
-        if not order:
-            raise HTTPException(status_code=404, detail="Order not found")
-        order.customer_name = order_data.customer_name
-        order.item = order_data.item
-        order.quantity = order_data.quantity
-        order.price = order_data.price
-        order.shipping_method = order_data.shipping_method
-        order.status = order_data.status
-        session.add(order)
-        session.commit()
-        session.refresh(order)
-        return order
-
-@app.delete("/orders/{order_id}")
-def delete_order(order_id: int):
-    with Session(engine) as session:
-        order = session.get(Order, order_id)
-        if not order:
-            raise HTTPException(status_code=404, detail="Order not found")
-        session.delete(order)
-        session.commit()
-        return {"message": "Order deleted successfully"}
-
-# =========================================================
-# Products Endpoints
-# =========================================================
-
-@app.get("/products", response_model=List[Product])
+# ----------------- 商品管理 -----------------
+@app.get("/products")
 def get_products():
-    with Session(engine) as session:
-        return session.exec(select(Product)).all()
+    return products
 
-@app.post("/products", response_model=Product)
+@app.post("/products")
 def create_product(product: Product):
-    with Session(engine) as session:
-        session.add(product)
-        session.commit()
-        session.refresh(product)
-        return product
+    global product_id_counter
+    product.id = product_id_counter
+    product_id_counter += 1
+    products.append(product.dict())
+    return product
 
-@app.patch("/products/{product_id}", response_model=Product)
-def update_product(product_id: int, product_data: Product):
-    with Session(engine) as session:
-        product = session.get(Product, product_id)
-        if not product:
-            raise HTTPException(status_code=404, detail="Product not found")
-        product.name = product_data.name
-        product.price = product_data.price
-        product.stock = product_data.stock
-        session.add(product)
-        session.commit()
-        session.refresh(product)
-        return product
+@app.patch("/products/{product_id}")
+def update_product(product_id: int, updated: Product):
+    for idx, p in enumerate(products):
+        if p["id"] == product_id:
+            products[idx].update(updated.dict(exclude_unset=True))
+            return products[idx]
+    raise HTTPException(status_code=404, detail="Product not found")
 
 @app.delete("/products/{product_id}")
 def delete_product(product_id: int):
-    with Session(engine) as session:
-        product = session.get(Product, product_id)
-        if not product:
-            raise HTTPException(status_code=404, detail="Product not found")
-        session.delete(product)
-        session.commit()
-        return {"message": "Product deleted successfully"}
+    global products
+    products = [p for p in products if p["id"] != product_id]
+    return {"message": "Deleted"}
 
-# =========================================================
-# Run locally (for debug)
-# =========================================================
+@app.get("/products/csv")
+def export_products_csv():
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=["id", "name", "price", "stock"])
+    writer.writeheader()
+    writer.writerows(products)
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+                             media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=products.csv"})
 
-if __name__ == "__main__":
-    create_db_and_tables()
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# ----------------- 訂單管理 -----------------
+@app.get("/orders")
+def get_orders():
+    return orders
+
+@app.post("/orders")
+def create_order(order: Order):
+    global order_id_counter
+    order.id = order_id_counter
+    order_id_counter += 1
+
+    # 自動計算金額
+    product = next((p for p in products if p["name"] == order.item), None)
+    if product:
+        order.price = product["price"] * order.quantity
+    else:
+        order.price = 0
+
+    orders.append(order.dict())
+    return order
+
+@app.patch("/orders/{order_id}")
+def update_order(order_id: int, updated: Order):
+    for idx, o in enumerate(orders):
+        if o["id"] == order_id:
+            orders[idx].update(updated.dict(exclude_unset=True))
+            return orders[idx]
+    raise HTTPException(status_code=404, detail="Order not found")
+
+@app.delete("/orders/{order_id}")
+def delete_order(order_id: int):
+    global orders
+    orders = [o for o in orders if o["id"] != order_id]
+    return {"message": "Deleted"}
+
+@app.get("/orders/csv")
+def export_orders_csv():
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=["id", "customer_name", "item", "quantity", "price", "status", "shipping_method"])
+    writer.writeheader()
+    writer.writerows(orders)
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+                             media_type="text/csv",
+                             headers={"Content-Disposition": "attachment; filename=orders.csv"})
