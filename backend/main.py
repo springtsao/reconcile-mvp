@@ -1,65 +1,58 @@
-from fastapi import FastAPI, HTTPException, Response
-from sqlmodel import SQLModel, Field, create_engine, Session, select
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlmodel import SQLModel, Field, Session, create_engine, select
 from typing import Optional, List
-from fastapi.middleware.cors import CORSMiddleware
-import csv
-import io
+import csv, io, os, datetime
 
-# ====================
-# 資料庫模型
-# ====================
+app = FastAPI()
+
+# Database
+db_url = os.getenv("DATABASE_URL", "sqlite:///database.db")
+engine = create_engine(db_url, connect_args={"check_same_thread": False})
+
+# Models
 class Item(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     price: float
     stock: int
-    category: Optional[str] = None
-    description: Optional[str] = None
 
 class Order(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    customer_name: str
-    item: str
+    customer: str
+    item_id: int
     quantity: int
-    price: float
-    status: str
+    total: float
+    status: str = "尚未匯款"
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
 
-# ====================
-# FastAPI 初始化
-# ====================
-app = FastAPI()
+SQLModel.metadata.create_all(engine)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 商品管理
+@app.post("/items")
+def create_item(item: Item):
+    with Session(engine) as session:
+        session.add(item)
+        session.commit()
+        session.refresh(item)
+        return item
 
-DATABASE_URL = "sqlite:///database.db"
-engine = create_engine(DATABASE_URL)
-
-@app.on_event("startup")
-def on_startup():
-    SQLModel.metadata.create_all(engine)
-
-# ====================
-# 商品管理 API
-# ====================
 @app.get("/items", response_model=List[Item])
 def get_items():
     with Session(engine) as session:
         return session.exec(select(Item)).all()
 
-@app.post("/items", response_model=Item)
-def add_item(item: Item):
-    if item.price < 0 or item.stock < 0:
-        raise HTTPException(status_code=400, detail="價格與庫存不能小於 0")
+@app.patch("/items/{item_id}")
+def update_item(item_id: int, new_item: Item):
     with Session(engine) as session:
+        item = session.get(Item, item_id)
+        if not item:
+            raise HTTPException(404, "商品不存在")
+        item.name = new_item.name or item.name
+        item.price = new_item.price or item.price
+        item.stock = new_item.stock or item.stock
         session.add(item)
         session.commit()
-        session.refresh(item)
         return item
 
 @app.delete("/items/{item_id}")
@@ -67,27 +60,54 @@ def delete_item(item_id: int):
     with Session(engine) as session:
         item = session.get(Item, item_id)
         if not item:
-            raise HTTPException(status_code=404, detail="找不到商品")
+            raise HTTPException(404, "商品不存在")
         session.delete(item)
         session.commit()
         return {"ok": True}
 
-# ====================
-# 訂單管理 API
-# ====================
-@app.get("/orders", response_model=List[Order])
-def get_orders():
+# 訂單管理
+@app.post("/orders")
+def create_order(order: Order):
     with Session(engine) as session:
-        return session.exec(select(Order)).all()
-
-@app.post("/orders", response_model=Order)
-def add_order(order: Order):
-    if order.quantity <= 0 or order.price < 0:
-        raise HTTPException(status_code=400, detail="數量必須 >0 且價格 >=0")
-    with Session(engine) as session:
+        item = session.get(Item, order.item_id)
+        if not item:
+            raise HTTPException(404, "商品不存在")
+        order.total = item.price * order.quantity
         session.add(order)
         session.commit()
         session.refresh(order)
+        return order
+
+@app.get("/orders", response_model=List[Order])
+def get_orders(
+    search: Optional[str] = None,
+    sort_by: Optional[str] = Query(None, enum=["created_at", "status"])
+):
+    with Session(engine) as session:
+        query = select(Order)
+        if search:
+            query = query.where(Order.customer.contains(search))
+        if sort_by:
+            if sort_by == "created_at":
+                query = query.order_by(Order.created_at.desc())
+            elif sort_by == "status":
+                query = query.order_by(Order.status.asc())
+        return session.exec(query).all()
+
+@app.patch("/orders/{order_id}")
+def update_order(order_id: int, new_order: Order):
+    with Session(engine) as session:
+        order = session.get(Order, order_id)
+        if not order:
+            raise HTTPException(404, "訂單不存在")
+        order.customer = new_order.customer or order.customer
+        order.quantity = new_order.quantity or order.quantity
+        order.status = new_order.status or order.status
+        item = session.get(Item, order.item_id)
+        if item:
+            order.total = item.price * order.quantity
+        session.add(order)
+        session.commit()
         return order
 
 @app.delete("/orders/{order_id}")
@@ -95,23 +115,20 @@ def delete_order(order_id: int):
     with Session(engine) as session:
         order = session.get(Order, order_id)
         if not order:
-            raise HTTPException(status_code=404, detail="找不到訂單")
+            raise HTTPException(404, "訂單不存在")
         session.delete(order)
         session.commit()
         return {"ok": True}
 
-# ====================
-# 匯出訂單 CSV
-# ====================
+# 匯出
 @app.get("/orders/export")
 def export_orders():
     with Session(engine) as session:
         orders = session.exec(select(Order)).all()
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(["ID", "客戶姓名", "商品", "數量", "單價", "總金額", "狀態"])
+        writer.writerow(["ID", "Customer", "Item", "Quantity", "Total", "Status", "Created At"])
         for o in orders:
-            writer.writerow([o.id, o.customer_name, o.item, o.quantity, o.price, o.price * o.quantity, o.status])
-        response = Response(content=output.getvalue(), media_type="text/csv")
-        response.headers["Content-Disposition"] = "attachment; filename=orders.csv"
-        return response
+            writer.writerow([o.id, o.customer, o.item_id, o.quantity, o.total, o.status, o.created_at])
+        output.seek(0)
+        return StreamingResponse(output, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=orders.csv"})
