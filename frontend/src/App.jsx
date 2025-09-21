@@ -1,31 +1,52 @@
-import { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
 export default function App() {
   const [orders, setOrders] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [shippingMethods, setShippingMethods] = useState([]);
   const [form, setForm] = useState({
     name: "",
     phone: "",
-    item: "T-Shirt",
+    product: "",
     account_last5: "",
-    shipping: "郵局",
+    shipping_method: "",
     status: "尚未匯款",
   });
+  const [newProduct, setNewProduct] = useState("");
+  const [newShipping, setNewShipping] = useState("");
 
-  const fetchOrders = async () => {
-    const res = await fetch(`${API_URL}/orders/`);
-    const data = await res.json();
-    setOrders(data);
-  };
-
+  // ====================
+  // 資料讀取
+  // ====================
   useEffect(() => {
     fetchOrders();
+    fetchProducts();
+    fetchShippingMethods();
   }, []);
 
+  const fetchOrders = async () => {
+    const res = await fetch(`${API_URL}/orders`);
+    setOrders(await res.json());
+  };
+
+  const fetchProducts = async () => {
+    const res = await fetch(`${API_URL}/products`);
+    setProducts(await res.json());
+  };
+
+  const fetchShippingMethods = async () => {
+    const res = await fetch(`${API_URL}/shipping-methods`);
+    setShippingMethods(await res.json());
+  };
+
+  // ====================
+  // CRUD 操作
+  // ====================
   const handleSubmit = async (e) => {
     e.preventDefault();
-    await fetch(`${API_URL}/orders/`, {
+    await fetch(`${API_URL}/orders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(form),
@@ -33,116 +54,127 @@ export default function App() {
     setForm({
       name: "",
       phone: "",
-      item: "T-Shirt",
+      product: "",
       account_last5: "",
-      shipping: "郵局",
+      shipping_method: "",
       status: "尚未匯款",
     });
     fetchOrders();
   };
 
-  const handleDelete = async (id) => {
+  const handleDeleteOrder = async (id) => {
     await fetch(`${API_URL}/orders/${id}`, { method: "DELETE" });
     fetchOrders();
   };
 
-  const handleUpdate = async (id, newStatus) => {
-    await fetch(`${API_URL}/orders/${id}`, {
-      method: "PATCH",
+  const addProduct = async () => {
+    if (!newProduct) return;
+    await fetch(`${API_URL}/products`, {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: newStatus }),
+      body: JSON.stringify({ name: newProduct }),
     });
-    fetchOrders();
+    setNewProduct("");
+    fetchProducts();
   };
 
-  return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">對帳系統</h1>
+  const addShippingMethod = async () => {
+    if (!newShipping) return;
+    await fetch(`${API_URL}/shipping-methods`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newShipping }),
+    });
+    setNewShipping("");
+    fetchShippingMethods();
+  };
 
-      {/* 表單 */}
-      <form onSubmit={handleSubmit} className="space-y-2 mb-6">
+  // ====================
+  // UI
+  // ====================
+  return (
+    <div style={{ padding: "20px", fontFamily: "sans-serif" }}>
+      <h1>對帳系統</h1>
+
+      {/* 訂單表單 */}
+      <form onSubmit={handleSubmit} style={{ marginBottom: "20px" }}>
         <input
           placeholder="姓名"
-          className="border p-2 w-full"
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
+          required
         />
         <input
           placeholder="電話"
-          className="border p-2 w-full"
           value={form.phone}
           onChange={(e) => setForm({ ...form, phone: e.target.value })}
+          required
         />
 
-        {/* 訂購項目 下拉選單 */}
+        {/* 商品選單 */}
         <select
-          className="border p-2 w-full"
-          value={form.item}
-          onChange={(e) => setForm({ ...form, item: e.target.value })}
+          value={form.product}
+          onChange={(e) => setForm({ ...form, product: e.target.value })}
+          required
         >
-          <option>T-Shirt</option>
-          <option>Bag</option>
-          <option>Notebook</option>
-          <option>Other</option>
+          <option value="">選擇商品</option>
+          {products.map((p) => (
+            <option key={p.id} value={p.name}>
+              {p.name}
+            </option>
+          ))}
         </select>
+        <input
+          placeholder="新增商品"
+          value={newProduct}
+          onChange={(e) => setNewProduct(e.target.value)}
+        />
+        <button type="button" onClick={addProduct}>
+          加入商品
+        </button>
 
         <input
           placeholder="帳號後五碼"
-          className="border p-2 w-full"
           value={form.account_last5}
           onChange={(e) => setForm({ ...form, account_last5: e.target.value })}
+          required
         />
 
-        {/* 寄送方式 下拉選單 */}
+        {/* 寄送方式選單 */}
         <select
-          className="border p-2 w-full"
-          value={form.shipping}
-          onChange={(e) => setForm({ ...form, shipping: e.target.value })}
+          value={form.shipping_method}
+          onChange={(e) =>
+            setForm({ ...form, shipping_method: e.target.value })
+          }
+          required
         >
-          <option>郵局</option>
-          <option>黑貓宅急便</option>
-          <option>7-11店到店</option>
-          <option>面交</option>
+          <option value="">選擇寄送方式</option>
+          {shippingMethods.map((s) => (
+            <option key={s.id} value={s.name}>
+              {s.name}
+            </option>
+          ))}
         </select>
-
-        <button className="bg-blue-500 text-white px-4 py-2 rounded">
-          新增訂單
+        <input
+          placeholder="新增寄送方式"
+          value={newShipping}
+          onChange={(e) => setNewShipping(e.target.value)}
+        />
+        <button type="button" onClick={addShippingMethod}>
+          加入寄送方式
         </button>
+
+        <button type="submit">新增訂單</button>
       </form>
 
       {/* 訂單列表 */}
-      <ul className="space-y-2">
-        {orders.map((order) => (
-          <li
-            key={order.id}
-            className="border p-3 flex justify-between items-center"
-          >
-            <div>
-              <p>
-                <strong>{order.name}</strong> ({order.phone})
-              </p>
-              <p>
-                {order.item} | {order.account_last5} | {order.shipping} |{" "}
-                <span className="font-semibold">{order.status}</span>
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <select
-                value={order.status}
-                onChange={(e) => handleUpdate(order.id, e.target.value)}
-                className="border p-1"
-              >
-                <option>尚未匯款</option>
-                <option>已對帳</option>
-                <option>已交貨</option>
-              </select>
-              <button
-                onClick={() => handleDelete(order.id)}
-                className="bg-red-500 text-white px-2 py-1 rounded"
-              >
-                刪除
-              </button>
-            </div>
+      <h2>訂單列表</h2>
+      <ul>
+        {orders.map((o) => (
+          <li key={o.id}>
+            {o.name} | {o.phone} | {o.product} | {o.account_last5} |{" "}
+            {o.shipping_method} | {o.status}
+            <button onClick={() => handleDeleteOrder(o.id)}>刪除</button>
           </li>
         ))}
       </ul>
