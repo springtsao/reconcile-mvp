@@ -1,134 +1,120 @@
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import StreamingResponse
-from sqlmodel import SQLModel, Field, Session, create_engine, select
-from typing import Optional, List
-import csv, io, os, datetime
+import React, { useEffect, useState } from "react";
 
-app = FastAPI()
+const API_URL = import.meta.env.VITE_API_URL;
 
-# Database
-db_url = os.getenv("DATABASE_URL", "sqlite:///database.db")
-engine = create_engine(db_url, connect_args={"check_same_thread": False})
+export default function App() {
+  const [items, setItems] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [customer, setCustomer] = useState("");
+  const [selectedItem, setSelectedItem] = useState("");
+  const [quantity, setQuantity] = useState(1);
+  const [search, setSearch] = useState("");
 
-# Models
-class Item(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    price: float
-    stock: int
+  const fetchItems = async () => {
+    const res = await fetch(`${API_URL}/items`);
+    setItems(await res.json());
+  };
 
-class Order(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    customer: str
-    item_id: int
-    quantity: int
-    total: float
-    status: str = "尚未匯款"
-    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+  const fetchOrders = async () => {
+    const res = await fetch(`${API_URL}/orders?search=${search}`);
+    setOrders(await res.json());
+  };
 
-SQLModel.metadata.create_all(engine)
+  useEffect(() => {
+    fetchItems();
+    fetchOrders();
+  }, [search]);
 
-# 商品管理
-@app.post("/items")
-def create_item(item: Item):
-    with Session(engine) as session:
-        session.add(item)
-        session.commit()
-        session.refresh(item)
-        return item
+  const createOrder = async () => {
+    if (!customer || !selectedItem) return alert("請輸入完整資料");
+    await fetch(`${API_URL}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ customer, item_id: selectedItem, quantity }),
+    });
+    setCustomer("");
+    setQuantity(1);
+    fetchOrders();
+  };
 
-@app.get("/items", response_model=List[Item])
-def get_items():
-    with Session(engine) as session:
-        return session.exec(select(Item)).all()
+  const deleteOrder = async (id) => {
+    await fetch(`${API_URL}/orders/${id}`, { method: "DELETE" });
+    fetchOrders();
+  };
 
-@app.patch("/items/{item_id}")
-def update_item(item_id: int, new_item: Item):
-    with Session(engine) as session:
-        item = session.get(Item, item_id)
-        if not item:
-            raise HTTPException(404, "商品不存在")
-        item.name = new_item.name or item.name
-        item.price = new_item.price or item.price
-        item.stock = new_item.stock or item.stock
-        session.add(item)
-        session.commit()
-        return item
+  const createItem = async (name, price, stock) => {
+    await fetch(`${API_URL}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, price, stock }),
+    });
+    fetchItems();
+  };
 
-@app.delete("/items/{item_id}")
-def delete_item(item_id: int):
-    with Session(engine) as session:
-        item = session.get(Item, item_id)
-        if not item:
-            raise HTTPException(404, "商品不存在")
-        session.delete(item)
-        session.commit()
-        return {"ok": True}
+  return (
+    <div style={{ padding: 20 }}>
+      <h1>對帳系統 MVP</h1>
 
-# 訂單管理
-@app.post("/orders")
-def create_order(order: Order):
-    with Session(engine) as session:
-        item = session.get(Item, order.item_id)
-        if not item:
-            raise HTTPException(404, "商品不存在")
-        order.total = item.price * order.quantity
-        session.add(order)
-        session.commit()
-        session.refresh(order)
-        return order
+      <h2>新增訂單</h2>
+      <input placeholder="客戶姓名" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+      <select value={selectedItem} onChange={(e) => setSelectedItem(e.target.value)}>
+        <option value="">選擇商品</option>
+        {items.map((i) => (
+          <option key={i.id} value={i.id}>
+            {i.name}（${i.price}）
+          </option>
+        ))}
+      </select>
+      <input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
+      <button onClick={createOrder}>送出</button>
 
-@app.get("/orders", response_model=List[Order])
-def get_orders(
-    search: Optional[str] = None,
-    sort_by: Optional[str] = Query(None, enum=["created_at", "status"])
-):
-    with Session(engine) as session:
-        query = select(Order)
-        if search:
-            query = query.where(Order.customer.contains(search))
-        if sort_by:
-            if sort_by == "created_at":
-                query = query.order_by(Order.created_at.desc())
-            elif sort_by == "status":
-                query = query.order_by(Order.status.asc())
-        return session.exec(query).all()
+      <h2>搜尋訂單</h2>
+      <input placeholder="輸入姓名或商品" value={search} onChange={(e) => setSearch(e.target.value)} />
 
-@app.patch("/orders/{order_id}")
-def update_order(order_id: int, new_order: Order):
-    with Session(engine) as session:
-        order = session.get(Order, order_id)
-        if not order:
-            raise HTTPException(404, "訂單不存在")
-        order.customer = new_order.customer or order.customer
-        order.quantity = new_order.quantity or order.quantity
-        order.status = new_order.status or order.status
-        item = session.get(Item, order.item_id)
-        if item:
-            order.total = item.price * order.quantity
-        session.add(order)
-        session.commit()
-        return order
+      <h2>訂單列表</h2>
+      <table border="1" cellPadding="5">
+        <thead>
+          <tr>
+            <th>ID</th><th>客戶</th><th>商品</th><th>數量</th><th>金額</th><th>狀態</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => (
+            <tr key={o.id}>
+              <td>{o.id}</td>
+              <td>{o.customer}</td>
+              <td>{o.item_id}</td>
+              <td>{o.quantity}</td>
+              <td>{o.total}</td>
+              <td>{o.status}</td>
+              <td>
+                <button onClick={() => deleteOrder(o.id)}>🗑️</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
-@app.delete("/orders/{order_id}")
-def delete_order(order_id: int):
-    with Session(engine) as session:
-        order = session.get(Order, order_id)
-        if not order:
-            raise HTTPException(404, "訂單不存在")
-        session.delete(order)
-        session.commit()
-        return {"ok": True}
+      <a href={`${API_URL}/orders/export`}><button>匯出 CSV</button></a>
 
-# 匯出
-@app.get("/orders/export")
-def export_orders():
-    with Session(engine) as session:
-        orders = session.exec(select(Order)).all()
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(["ID", "Customer", "Item", "Quantity", "Total", "Status", "Created At"])
-        for o in orders:
-            writer.writerow([o.id, o.customer, o.item_id, o.quantity, o.total, o.status, o.created_at])
-        output.seek(0)
-        return StreamingResponse(output, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=orders.csv"})
+      <h2>商品管理</h2>
+      <input id="itemName" placeholder="名稱" />
+      <input id="itemPrice" type="number" placeholder="單價" />
+      <input id="itemStock" type="number" placeholder="庫存" />
+      <button onClick={() => {
+        const name = document.getElementById("itemName").value;
+        const price = Number(document.getElementById("itemPrice").value);
+        const stock = Number(document.getElementById("itemStock").value);
+        createItem(name, price, stock);
+      }}>新增商品</button>
+
+      <ul>
+        {items.map((i) => (
+          <li key={i.id}>
+            {i.id}. {i.name} - ${i.price}（庫存 {i.stock}）
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
