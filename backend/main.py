@@ -1,16 +1,13 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-import io
-import csv
 
 app = FastAPI()
 
-# 允許跨域
+# 允許跨域 (Vercel 前端需要呼叫 Render API)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 部署後可以鎖定你的 Vercel 網域
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
