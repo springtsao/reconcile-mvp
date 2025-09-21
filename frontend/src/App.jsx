@@ -2,10 +2,8 @@ import React, { useState, useEffect } from "react";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
-export default function App() {
+function App() {
   const [orders, setOrders] = useState([]);
-  const [products, setProducts] = useState([]);
-  const [shippingMethods, setShippingMethods] = useState([]);
   const [form, setForm] = useState({
     name: "",
     phone: "",
@@ -14,12 +12,11 @@ export default function App() {
     shipping_method: "",
     status: "尚未匯款",
   });
-  const [newProduct, setNewProduct] = useState("");
-  const [newShipping, setNewShipping] = useState("");
+  const [products, setProducts] = useState([]); // 商品下拉選單
+  const [shippingMethods, setShippingMethods] = useState([]); // 寄送方式下拉選單
+  const [loading, setLoading] = useState(false);
 
-  // ====================
-  // 資料讀取
-  // ====================
+  // 讀取訂單 & 下拉選單資料
   useEffect(() => {
     fetchOrders();
     fetchProducts();
@@ -28,24 +25,25 @@ export default function App() {
 
   const fetchOrders = async () => {
     const res = await fetch(`${API_URL}/orders`);
-    setOrders(await res.json());
+    const data = await res.json();
+    setOrders(data);
   };
 
   const fetchProducts = async () => {
     const res = await fetch(`${API_URL}/products`);
-    setProducts(await res.json());
+    const data = await res.json();
+    setProducts(Array.isArray(data) ? data : []);
   };
 
   const fetchShippingMethods = async () => {
     const res = await fetch(`${API_URL}/shipping-methods`);
-    setShippingMethods(await res.json());
+    const data = await res.json();
+    setShippingMethods(Array.isArray(data) ? data : []);
   };
 
-  // ====================
-  // CRUD 操作
-  // ====================
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
     await fetch(`${API_URL}/orders`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -59,45 +57,21 @@ export default function App() {
       shipping_method: "",
       status: "尚未匯款",
     });
+    setLoading(false);
     fetchOrders();
   };
 
-  const handleDeleteOrder = async (id) => {
+  const handleDelete = async (id) => {
     await fetch(`${API_URL}/orders/${id}`, { method: "DELETE" });
     fetchOrders();
   };
 
-  const addProduct = async () => {
-    if (!newProduct) return;
-    await fetch(`${API_URL}/products`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newProduct }),
-    });
-    setNewProduct("");
-    fetchProducts();
-  };
-
-  const addShippingMethod = async () => {
-    if (!newShipping) return;
-    await fetch(`${API_URL}/shipping-methods`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newShipping }),
-    });
-    setNewShipping("");
-    fetchShippingMethods();
-  };
-
-  // ====================
-  // UI
-  // ====================
   return (
-    <div style={{ padding: "20px", fontFamily: "sans-serif" }}>
-      <h1>對帳系統</h1>
+    <div className="p-6 max-w-4xl mx-auto">
+      <h1 className="text-2xl font-bold mb-4">對帳系統</h1>
 
-      {/* 訂單表單 */}
-      <form onSubmit={handleSubmit} style={{ marginBottom: "20px" }}>
+      {/* 新增訂單表單 */}
+      <form onSubmit={handleSubmit} className="grid gap-2 mb-6">
         <input
           placeholder="姓名"
           value={form.name}
@@ -111,36 +85,30 @@ export default function App() {
           required
         />
 
-        {/* 商品選單 */}
+        {/* 商品下拉選單 */}
         <select
           value={form.product}
           onChange={(e) => setForm({ ...form, product: e.target.value })}
           required
         >
           <option value="">選擇商品</option>
-          {products.map((p) => (
+          {(Array.isArray(products) ? products : []).map((p) => (
             <option key={p.id} value={p.name}>
               {p.name}
             </option>
           ))}
         </select>
-        <input
-          placeholder="新增商品"
-          value={newProduct}
-          onChange={(e) => setNewProduct(e.target.value)}
-        />
-        <button type="button" onClick={addProduct}>
-          加入商品
-        </button>
 
         <input
           placeholder="帳號後五碼"
           value={form.account_last5}
-          onChange={(e) => setForm({ ...form, account_last5: e.target.value })}
+          onChange={(e) =>
+            setForm({ ...form, account_last5: e.target.value })
+          }
           required
         />
 
-        {/* 寄送方式選單 */}
+        {/* 寄送方式下拉選單 */}
         <select
           value={form.shipping_method}
           onChange={(e) =>
@@ -149,35 +117,68 @@ export default function App() {
           required
         >
           <option value="">選擇寄送方式</option>
-          {shippingMethods.map((s) => (
+          {(Array.isArray(shippingMethods) ? shippingMethods : []).map((s) => (
             <option key={s.id} value={s.name}>
               {s.name}
             </option>
           ))}
         </select>
-        <input
-          placeholder="新增寄送方式"
-          value={newShipping}
-          onChange={(e) => setNewShipping(e.target.value)}
-        />
-        <button type="button" onClick={addShippingMethod}>
-          加入寄送方式
-        </button>
 
-        <button type="submit">新增訂單</button>
+        <select
+          value={form.status}
+          onChange={(e) => setForm({ ...form, status: e.target.value })}
+        >
+          <option value="尚未匯款">尚未匯款</option>
+          <option value="已對帳">已對帳</option>
+          <option value="已交貨">已交貨</option>
+        </select>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="bg-blue-500 text-white py-1 px-3 rounded"
+        >
+          {loading ? "新增中..." : "新增訂單"}
+        </button>
       </form>
 
       {/* 訂單列表 */}
-      <h2>訂單列表</h2>
-      <ul>
-        {orders.map((o) => (
-          <li key={o.id}>
-            {o.name} | {o.phone} | {o.product} | {o.account_last5} |{" "}
-            {o.shipping_method} | {o.status}
-            <button onClick={() => handleDeleteOrder(o.id)}>刪除</button>
-          </li>
-        ))}
-      </ul>
+      <h2 className="text-xl font-semibold mb-2">訂單列表</h2>
+      <table className="w-full border">
+        <thead>
+          <tr className="bg-gray-100">
+            <th className="border px-2">姓名</th>
+            <th className="border px-2">電話</th>
+            <th className="border px-2">商品</th>
+            <th className="border px-2">帳號後五碼</th>
+            <th className="border px-2">寄送方式</th>
+            <th className="border px-2">狀態</th>
+            <th className="border px-2">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => (
+            <tr key={o.id}>
+              <td className="border px-2">{o.name}</td>
+              <td className="border px-2">{o.phone}</td>
+              <td className="border px-2">{o.product}</td>
+              <td className="border px-2">{o.account_last5}</td>
+              <td className="border px-2">{o.shipping_method}</td>
+              <td className="border px-2">{o.status}</td>
+              <td className="border px-2">
+                <button
+                  onClick={() => handleDelete(o.id)}
+                  className="bg-red-500 text-white px-2 py-1 rounded"
+                >
+                  刪除
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
+
+export default App;
