@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link } from "react-router-dom";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
-// --- Context (全域狀態管理) ---
+// --- Context ---
 const DataContext = createContext();
 const useData = () => useContext(DataContext);
 
