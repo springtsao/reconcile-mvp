@@ -1,120 +1,142 @@
-import React, { useEffect, useState } from "react";
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import SQLModel, Field, Session, create_engine, select
+from typing import Optional, List
+import uvicorn
 
-const API_URL = import.meta.env.VITE_API_URL;
+# =========================================================
+# Database models
+# =========================================================
 
-export default function App() {
-  const [items, setItems] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [customer, setCustomer] = useState("");
-  const [selectedItem, setSelectedItem] = useState("");
-  const [quantity, setQuantity] = useState(1);
-  const [search, setSearch] = useState("");
+class Order(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    customer_name: str
+    item: str
+    quantity: int
+    price: float
+    shipping_method: str
+    status: str = "尚未匯款"
 
-  const fetchItems = async () => {
-    const res = await fetch(`${API_URL}/items`);
-    setItems(await res.json());
-  };
+class Product(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    price: float
+    stock: int
 
-  const fetchOrders = async () => {
-    const res = await fetch(`${API_URL}/orders?search=${search}`);
-    setOrders(await res.json());
-  };
+# =========================================================
+# Database setup
+# =========================================================
 
-  useEffect(() => {
-    fetchItems();
-    fetchOrders();
-  }, [search]);
+DATABASE_URL = "sqlite:///./database.db"
+engine = create_engine(DATABASE_URL, echo=True)
 
-  const createOrder = async () => {
-    if (!customer || !selectedItem) return alert("請輸入完整資料");
-    await fetch(`${API_URL}/orders`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ customer, item_id: selectedItem, quantity }),
-    });
-    setCustomer("");
-    setQuantity(1);
-    fetchOrders();
-  };
+def create_db_and_tables():
+    SQLModel.metadata.create_all(engine)
 
-  const deleteOrder = async (id) => {
-    await fetch(`${API_URL}/orders/${id}`, { method: "DELETE" });
-    fetchOrders();
-  };
+# =========================================================
+# FastAPI app
+# =========================================================
 
-  const createItem = async (name, price, stock) => {
-    await fetch(`${API_URL}/items`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, price, stock }),
-    });
-    fetchItems();
-  };
+app = FastAPI()
 
-  return (
-    <div style={{ padding: 20 }}>
-      <h1>對帳系統 MVP</h1>
+# Allow frontend access
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # ⚠️ 建議之後換成你的 Vercel 網址
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-      <h2>新增訂單</h2>
-      <input placeholder="客戶姓名" value={customer} onChange={(e) => setCustomer(e.target.value)} />
-      <select value={selectedItem} onChange={(e) => setSelectedItem(e.target.value)}>
-        <option value="">選擇商品</option>
-        {items.map((i) => (
-          <option key={i.id} value={i.id}>
-            {i.name}（${i.price}）
-          </option>
-        ))}
-      </select>
-      <input type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
-      <button onClick={createOrder}>送出</button>
+# =========================================================
+# Orders Endpoints
+# =========================================================
 
-      <h2>搜尋訂單</h2>
-      <input placeholder="輸入姓名或商品" value={search} onChange={(e) => setSearch(e.target.value)} />
+@app.get("/orders", response_model=List[Order])
+def get_orders():
+    with Session(engine) as session:
+        return session.exec(select(Order)).all()
 
-      <h2>訂單列表</h2>
-      <table border="1" cellPadding="5">
-        <thead>
-          <tr>
-            <th>ID</th><th>客戶</th><th>商品</th><th>數量</th><th>金額</th><th>狀態</th><th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((o) => (
-            <tr key={o.id}>
-              <td>{o.id}</td>
-              <td>{o.customer}</td>
-              <td>{o.item_id}</td>
-              <td>{o.quantity}</td>
-              <td>{o.total}</td>
-              <td>{o.status}</td>
-              <td>
-                <button onClick={() => deleteOrder(o.id)}>🗑️</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+@app.post("/orders", response_model=Order)
+def create_order(order: Order):
+    with Session(engine) as session:
+        session.add(order)
+        session.commit()
+        session.refresh(order)
+        return order
 
-      <a href={`${API_URL}/orders/export`}><button>匯出 CSV</button></a>
+@app.patch("/orders/{order_id}", response_model=Order)
+def update_order(order_id: int, order_data: Order):
+    with Session(engine) as session:
+        order = session.get(Order, order_id)
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        order.customer_name = order_data.customer_name
+        order.item = order_data.item
+        order.quantity = order_data.quantity
+        order.price = order_data.price
+        order.shipping_method = order_data.shipping_method
+        order.status = order_data.status
+        session.add(order)
+        session.commit()
+        session.refresh(order)
+        return order
 
-      <h2>商品管理</h2>
-      <input id="itemName" placeholder="名稱" />
-      <input id="itemPrice" type="number" placeholder="單價" />
-      <input id="itemStock" type="number" placeholder="庫存" />
-      <button onClick={() => {
-        const name = document.getElementById("itemName").value;
-        const price = Number(document.getElementById("itemPrice").value);
-        const stock = Number(document.getElementById("itemStock").value);
-        createItem(name, price, stock);
-      }}>新增商品</button>
+@app.delete("/orders/{order_id}")
+def delete_order(order_id: int):
+    with Session(engine) as session:
+        order = session.get(Order, order_id)
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        session.delete(order)
+        session.commit()
+        return {"message": "Order deleted successfully"}
 
-      <ul>
-        {items.map((i) => (
-          <li key={i.id}>
-            {i.id}. {i.name} - ${i.price}（庫存 {i.stock}）
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
+# =========================================================
+# Products Endpoints
+# =========================================================
+
+@app.get("/products", response_model=List[Product])
+def get_products():
+    with Session(engine) as session:
+        return session.exec(select(Product)).all()
+
+@app.post("/products", response_model=Product)
+def create_product(product: Product):
+    with Session(engine) as session:
+        session.add(product)
+        session.commit()
+        session.refresh(product)
+        return product
+
+@app.patch("/products/{product_id}", response_model=Product)
+def update_product(product_id: int, product_data: Product):
+    with Session(engine) as session:
+        product = session.get(Product, product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        product.name = product_data.name
+        product.price = product_data.price
+        product.stock = product_data.stock
+        session.add(product)
+        session.commit()
+        session.refresh(product)
+        return product
+
+@app.delete("/products/{product_id}")
+def delete_product(product_id: int):
+    with Session(engine) as session:
+        product = session.get(Product, product_id)
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        session.delete(product)
+        session.commit()
+        return {"message": "Product deleted successfully"}
+
+# =========================================================
+# Run locally (for debug)
+# =========================================================
+
+if __name__ == "__main__":
+    create_db_and_tables()
+    uvicorn.run(app, host="0.0.0.0", port=8000)
